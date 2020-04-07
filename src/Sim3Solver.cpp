@@ -33,17 +33,27 @@
 namespace ORB_SLAM2
 {
 
+// 变量名称命名规则：m表示member，v表示vector(数据结构)，p表示point
+// 问题：vpMatched12的定义是什么？
+// 按照后面来看，不是匹配个数，而是Frame2中的特征点个数，且每个值存着是否在Frame1中有对应的匹配点
+// 注意：12表示2到1，这是视觉SLAM十四讲中就有的定义，后面的R和t也是一样
+// 问题：MapPoint的定义是什么？
+// 与KeyPoint不一样，更像是带有descriptor的KeyPoint?
+// bFixScale为1表示Sim3，为0表示SE3
 Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> &vpMatched12, const bool bFixScale):
     mnIterations(0), mnBestInliers(0), mbFixScale(bFixScale)
 {
+    // mpKF1和mpKF2为头文件中定义的protected变量
+    // 问题：使用protected的原因？可能是隔绝影响
     mpKF1 = pKF1;
     mpKF2 = pKF2;
 
+    // 问题：GetMapPointMatches的定义是什么？需要研究下KeyFrame的构造
     vector<MapPoint*> vpKeyFrameMP1 = pKF1->GetMapPointMatches();
 
     mN1 = vpMatched12.size();
 
-    mvpMapPoints1.reserve(mN1);
+    mvpMapPoints1.reserve(mN1); // vector::reserve要求至少能容纳多少个元素
     mvpMapPoints2.reserve(mN1);
     mvpMatches12 = vpMatched12;
     mvnIndices1.reserve(mN1);
@@ -55,7 +65,7 @@ Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> 
     cv::Mat Rcw2 = pKF2->GetRotation();
     cv::Mat tcw2 = pKF2->GetTranslation();
 
-    mvAllIndices.reserve(mN1);
+    mvAllIndices.reserve(mN1); // Indices for random selection
 
     size_t idx=0;
     // mN1为pKF2特征点的个数
@@ -65,6 +75,7 @@ Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> 
         if(vpMatched12[i1])
         {
             // step1: 根据vpMatched12配对比配的MapPoint： pMP1和pMP2
+            // 问题：这里的逻辑没有很清楚，关键是每个变量的定义？
             MapPoint* pMP1 = vpKeyFrameMP1[i1];
             MapPoint* pMP2 = vpMatched12[i1];
 
@@ -84,14 +95,19 @@ Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> 
                 continue;
 
             // step2.2：取出匹配特征点的引用：kp1和kp2
+            // 使用引用可以节约资源
             const cv::KeyPoint &kp1 = pKF1->mvKeysUn[indexKF1];
             const cv::KeyPoint &kp2 = pKF2->mvKeysUn[indexKF2];
 
             // step2.3：根据特征点的尺度计算对应的误差阈值：mvnMaxError1和mvnMaxError2
+            // ORB特征使用了金字塔来实现尺度不变性，因此需要计算特征点当前的尺度
+            // octave表示金字塔层数，即特征点被提取的层，OpenCV自带定义
+            // 尺度因子的平方，其中尺度因子为scale^n，scale=1.2，n为层数
+            // 问题：关于尺度的对应关系还需要研究？
             const float sigmaSquare1 = pKF1->mvLevelSigma2[kp1.octave];
             const float sigmaSquare2 = pKF2->mvLevelSigma2[kp2.octave];
 
-            mvnMaxError1.push_back(9.210*sigmaSquare1);
+            mvnMaxError1.push_back(9.210*sigmaSquare1); // 问题：9.21是怎么来的？
             mvnMaxError2.push_back(9.210*sigmaSquare2);
 
             // mvpMapPoints1和mvpMapPoints2是匹配的MapPoints容器
@@ -101,12 +117,12 @@ Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> 
 
             // step4：将MapPoint从世界坐标系变换到相机坐标系：mvX3Dc1和mvX3Dc2
             cv::Mat X3D1w = pMP1->GetWorldPos();
-            mvX3Dc1.push_back(Rcw1*X3D1w+tcw1);
+            mvX3Dc1.push_back(Rcw1*X3D1w+tcw1); // 注意：cw表示从world到camera
 
             cv::Mat X3D2w = pMP2->GetWorldPos();
             mvX3Dc2.push_back(Rcw2*X3D2w+tcw2);
 
-            mvAllIndices.push_back(idx);
+            mvAllIndices.push_back(idx); // 问题：mvAllIndices的用处？
             idx++;
         }
     }
@@ -115,13 +131,14 @@ Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> 
     mK1 = pKF1->mK;
     mK2 = pKF2->mK;
 
-    // step6：记录计算两针Sim3之前3D mappoint在图像上的投影坐标：mvP1im1和mvP2im2
+    // step6：记录计算两帧Sim3之前3D mappoint在图像上的投影坐标：mvP1im1和mvP2im2
     FromCameraToImage(mvX3Dc1,mvP1im1,mK1);
     FromCameraToImage(mvX3Dc2,mvP2im2,mK2);
 
     SetRansacParameters();
 }
 
+// 设置RANSAC参数，按照特征点匹配数量动态调整参数，具体待研究
 void Sim3Solver::SetRansacParameters(double probability, int minInliers, int maxIterations)
 {
     mRansacProb = probability;
@@ -155,29 +172,36 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
     vbInliers = vector<bool>(mN1,false);
     nInliers=0;
 
+    // 判断是否符合RANSAC返回条件
     if(N<mRansacMinInliers)
     {
         bNoMore = true;
-        return cv::Mat();
+        return cv::Mat(); // 没有合适解
     }
 
     vector<size_t> vAvailableIndices;
 
+    // 用cv::Mat的形式存3组匹配对比较方便
     cv::Mat P3Dc1i(3,3,CV_32F);
     cv::Mat P3Dc2i(3,3,CV_32F);
 
     int nCurrentIterations = 0;
     while(mnIterations<mRansacMaxIts && nCurrentIterations<nIterations)
     {
+        // 问题：为何有两个迭代次数？
         nCurrentIterations++;// 这个函数中迭代的次数
         mnIterations++;// 总的迭代次数，默认为最大为300
 
         vAvailableIndices = mvAllIndices;
 
+        // 以下为RANSAC的基本流程，共有4个步骤组成
+
         // Get min set of points
         // 步骤1：任意取三组点算Sim矩阵
+        // 待确认：要求R,t,s，分别是3,2,1个自由度，因此3组点可以提供6个自由度的约束
         for(short i = 0; i < 3; ++i)
         {
+            // 随机给定Index，并以此选择一对匹配对
             int randi = DUtils::Random::RandomInt(0, vAvailableIndices.size()-1);
 
             int idx = vAvailableIndices[randi];
@@ -186,19 +210,23 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
             // x1 x2 x3 ...
             // y1 y2 y3 ...
             // z1 z2 z3 ...
-            mvX3Dc1[idx].copyTo(P3Dc1i.col(i));
+            mvX3Dc1[idx].copyTo(P3Dc1i.col(i)); // 拷贝到P3Dc1i和P3Dc2i
             mvX3Dc2[idx].copyTo(P3Dc2i.col(i));
 
+            // 已经选择过的需要删掉，以防重复选择
             vAvailableIndices[randi] = vAvailableIndices.back();
             vAvailableIndices.pop_back();
         }
 
         // 步骤2：根据两组匹配的3D点，计算之间的Sim3变换
+        // 应该是三组吧？
         ComputeSim3(P3Dc1i,P3Dc2i);
 
         // 步骤3：通过投影误差进行inlier检测
+        // 这里都不怎么需要传参好厉害，应该是和protected数据类型有关系
         CheckInliers();
 
+        // 如果当前结果比之前的都要好，则更新最好的
         if(mnInliersi>=mnBestInliers)
         {
             mvbBestInliers = mvbInliersi;
@@ -208,6 +236,7 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
             mBestTranslation = mt12i.clone();
             mBestScale = ms12i;
 
+            // 这一部分没理解在干嘛
             if(mnInliersi>mRansacMinInliers)
             {
                 nInliers = mnInliersi;
@@ -220,19 +249,22 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
             }
         }
     }
-
+    
+    // 超过最大迭代次数，返回无法求解
     if(mnIterations>=mRansacMaxIts)
         bNoMore=true;
 
     return cv::Mat();
 }
 
+// 里面就只有一个iterate函数，主要加了一个flag
 cv::Mat Sim3Solver::find(vector<bool> &vbInliers12, int &nInliers)
 {
     bool bFlag;
     return iterate(mRansacMaxIts,bFlag,vbInliers12,nInliers);
 }
 
+// ComputeSim3里要用，主要是为了求得质心
 void Sim3Solver::ComputeCentroid(cv::Mat &P, cv::Mat &Pr, cv::Mat &C)
 {
     // 这两句可以使用CV_REDUCE_AVG选项来搞定
@@ -245,7 +277,7 @@ void Sim3Solver::ComputeCentroid(cv::Mat &P, cv::Mat &Pr, cv::Mat &C)
     }
 }
 
-
+// 本部分代码的核心：根据输入的三组匹配对，求解Sim3中的R,t,s
 void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2)
 {
     // ！！！！！！！这段代码一定要看这篇论文！！！！！！！！！！！
@@ -301,7 +333,7 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2)
     // Rotation angle. sin is the norm of the imaginary part, cos is the real part
     double ang=atan2(norm(vec),evec.at<float>(0,0));
 
-    vec = 2*ang*vec/norm(vec); //Angle-axis representation. quaternion angle is the half
+    vec = 2*ang*vec/norm(vec); // Angle-axis representation. quaternion angle is the half
 
     mR12i.create(3,3,P1.type());
 
@@ -358,6 +390,7 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2)
     tinv.copyTo(mT21i.rowRange(0,3).col(3));
 }
 
+// RANSAC中的第三步，需要根据阈值确定Inlier的数量
 void Sim3Solver::CheckInliers()
 {
     vector<cv::Mat> vP1im2, vP2im1;
@@ -368,12 +401,13 @@ void Sim3Solver::CheckInliers()
 
     for(size_t i=0; i<mvP1im1.size(); i++)
     {
-        cv::Mat dist1 = mvP1im1[i]-vP2im1[i];
+        cv::Mat dist1 = mvP1im1[i]-vP2im1[i]; // 求重投影误差
         cv::Mat dist2 = vP1im2[i]-mvP2im2[i];
 
-        const float err1 = dist1.dot(dist1);
+        const float err1 = dist1.dot(dist1); // 平方
         const float err2 = dist2.dot(dist2);
 
+        // 给定了阈值
         if(err1<mvnMaxError1[i] && err2<mvnMaxError2[i])
         {
             mvbInliersi[i]=true;
@@ -384,7 +418,7 @@ void Sim3Solver::CheckInliers()
     }
 }
 
-
+// 下面三个函数是用于外界从类里获得求解结果的
 cv::Mat Sim3Solver::GetEstimatedRotation()
 {
     return mBestRotation.clone();
@@ -400,6 +434,8 @@ float Sim3Solver::GetEstimatedScale()
     return mBestScale;
 }
 
+// CheckInliers里用到，用于计算重投影坐标，与下面的FromCameraToImage类似，多了R,t的转换
+// 问题：怎么没有尺度s？
 void Sim3Solver::Project(const vector<cv::Mat> &vP3Dw, vector<cv::Mat> &vP2D, cv::Mat Tcw, cv::Mat K)
 {
     cv::Mat Rcw = Tcw.rowRange(0,3).colRange(0,3);
@@ -423,6 +459,8 @@ void Sim3Solver::Project(const vector<cv::Mat> &vP3Dw, vector<cv::Mat> &vP2D, cv
     }
 }
 
+// 最基本的相机坐标系到图像坐标系的转换
+// Z*[x y 1]' = K*[X Y Z]' 
 void Sim3Solver::FromCameraToImage(const vector<cv::Mat> &vP3Dc, vector<cv::Mat> &vP2D, cv::Mat K)
 {
     const float &fx = K.at<float>(0,0);

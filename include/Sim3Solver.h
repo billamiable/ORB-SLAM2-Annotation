@@ -78,7 +78,7 @@ protected:
     std::vector<size_t> mvnMaxError1;
     std::vector<size_t> mvnMaxError2;
 
-    int N;
+    int N; // 表示什么？
     int mN1;
 
     // Current Estimation
