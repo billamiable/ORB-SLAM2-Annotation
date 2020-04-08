@@ -34,11 +34,11 @@ namespace ORB_SLAM2
 {
 
 // 变量名称命名规则：m表示member，v表示vector(数据结构)，p表示point
-// 问题：vpMatched12的定义是什么？
-// 按照后面来看，不是匹配个数，而是Frame2中的特征点个数，且每个值存着是否在Frame1中有对应的匹配点
+// 待确认：vpMatched12是Frame2中MapPoints的匹配，大小为Frame2的特征点个数
+// 里面存着匹配的Frame2的MapPoint指针或NULL，NULL表示未匹配
+// 对应地，Frame1中的GetMapPointMatches函数可获得同样大小的vector，存着Frame1的MapPoint指针
 // 注意：12表示2到1，这是视觉SLAM十四讲中就有的定义，后面的R和t也是一样
-// 问题：MapPoint的定义是什么？
-// 与KeyPoint不一样，更像是带有descriptor的KeyPoint?
+// MapPoint即为地图3D点，KeyPoint为投影后的2D图像关键点
 // bFixScale为1表示Sim3，为0表示SE3
 Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> &vpMatched12, const bool bFixScale):
     mnIterations(0), mnBestInliers(0), mbFixScale(bFixScale)
@@ -51,7 +51,7 @@ Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> 
     // 问题：GetMapPointMatches的定义是什么？需要研究下KeyFrame的构造
     vector<MapPoint*> vpKeyFrameMP1 = pKF1->GetMapPointMatches();
 
-    mN1 = vpMatched12.size();
+    mN1 = vpMatched12.size(); // mN1为pKF2特征点的个数
 
     mvpMapPoints1.reserve(mN1); // vector::reserve要求至少能容纳多少个元素
     mvpMapPoints2.reserve(mN1);
@@ -75,9 +75,9 @@ Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> 
         if(vpMatched12[i1])
         {
             // step1: 根据vpMatched12配对比配的MapPoint： pMP1和pMP2
-            // 问题：这里的逻辑没有很清楚，关键是每个变量的定义？
+            // 这里的逻辑基本清楚了，但还需要进一步确定
             MapPoint* pMP1 = vpKeyFrameMP1[i1];
-            MapPoint* pMP2 = vpMatched12[i1];
+            MapPoint* pMP2 = vpMatched12[i1]; // 
 
             if(!pMP1)
                 continue;
@@ -103,7 +103,7 @@ Sim3Solver::Sim3Solver(KeyFrame *pKF1, KeyFrame *pKF2, const vector<MapPoint *> 
             // ORB特征使用了金字塔来实现尺度不变性，因此需要计算特征点当前的尺度
             // octave表示金字塔层数，即特征点被提取的层，OpenCV自带定义
             // 尺度因子的平方，其中尺度因子为scale^n，scale=1.2，n为层数
-            // 问题：关于尺度的对应关系还需要研究？
+            // 问题：关于尺度的对应关系还需要研究
             const float sigmaSquare1 = pKF1->mvLevelSigma2[kp1.octave];
             const float sigmaSquare2 = pKF2->mvLevelSigma2[kp2.octave];
 
@@ -257,14 +257,14 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
     return cv::Mat();
 }
 
-// 里面就只有一个iterate函数，主要加了一个flag
+// 里面就只有一个iterate函数，多加了一个Flag
 cv::Mat Sim3Solver::find(vector<bool> &vbInliers12, int &nInliers)
 {
     bool bFlag;
     return iterate(mRansacMaxIts,bFlag,vbInliers12,nInliers);
 }
 
-// ComputeSim3里要用，主要是为了求得质心
+// ComputeSim3里要用，为了求得质心和去质心坐标
 void Sim3Solver::ComputeCentroid(cv::Mat &P, cv::Mat &Pr, cv::Mat &C)
 {
     // 这两句可以使用CV_REDUCE_AVG选项来搞定
@@ -273,7 +273,7 @@ void Sim3Solver::ComputeCentroid(cv::Mat &P, cv::Mat &Pr, cv::Mat &C)
 
     for(int i=0; i<P.cols; i++)
     {
-        Pr.col(i)=P.col(i)-C;//减去质心
+        Pr.col(i)=P.col(i)-C;// 3*1的向量之差，减去质心
     }
 }
 
@@ -285,6 +285,7 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2)
     // Horn 1987, Closed-form solution of absolute orientataion using unit quaternions
 
     // Step 1: Centroid and relative coordinates（模型坐标系）
+    // 这里只是初始化定义，没有赋值，Pr1和Pr2都是3*3的Mat类型
     cv::Mat Pr1(P1.size(),P1.type()); // Relative coordinates to centroid (set 1)
     cv::Mat Pr2(P2.size(),P2.type()); // Relative coordinates to centroid (set 2)
     cv::Mat O1(3,1,Pr1.type()); // Centroid of P1
@@ -296,6 +297,8 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2)
     ComputeCentroid(P2,Pr2,O2);
 
     // Step 2: Compute M matrix
+    // 原本是3*1与1*3矩阵得到3*3矩阵，然后相加
+    // 这里直接简化计算流程，3*3与3*3矩阵相乘结果仍然是3*3矩阵
     cv::Mat M = Pr2*Pr1.t();
 
     // Step 3: Compute N matrix
@@ -303,6 +306,7 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2)
 
     cv::Mat N(4,4,P1.type());
 
+    // 以下按照PPT里的构造得到，本质是因为求解对象为四元数，所以不用M做SVD分解
     N11 = M.at<float>(0,0)+M.at<float>(1,1)+M.at<float>(2,2);
     N12 = M.at<float>(1,2)-M.at<float>(2,1);
     N13 = M.at<float>(2,0)-M.at<float>(0,2);
@@ -323,20 +327,25 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2)
     // Step 4: Eigenvector of the highest eigenvalue
     cv::Mat eval, evec;
 
+    // 四元数的解为SVD分解最大奇异值对应的特征向量
     cv::eigen(N,eval,evec); //evec[0] is the quaternion of the desired rotation
 
-    // N矩阵最大特征值（第一个特征值）对应特征向量就是要求的四元数死（q0 q1 q2 q3）
+    // N矩阵最大特征值（第一个特征值）对应特征向量就是要求的四元数（q0 q1 q2 q3）
+    // 注意：由于此处四元数没有进行归一化，因此转化公式与常见的有所不同，需要先算norm
     // 将(q1 q2 q3)放入vec行向量，vec就是四元数旋转轴乘以sin(ang/2)
     cv::Mat vec(1,3,evec.type());
     (evec.row(0).colRange(1,4)).copyTo(vec); //extract imaginary part of the quaternion (sin*axis)
 
     // Rotation angle. sin is the norm of the imaginary part, cos is the real part
+    // ang为旋转的角度theta/2，所以真实的旋转角度为2*ang
     double ang=atan2(norm(vec),evec.at<float>(0,0));
 
+    // 角轴表示即为theta*n，由于需要归一化，所以要除以norm
     vec = 2*ang*vec/norm(vec); // Angle-axis representation. quaternion angle is the half
 
     mR12i.create(3,3,P1.type());
 
+    // 转化成旋转矩阵的表示
     cv::Rodrigues(vec,mR12i); // computes the rotation matrix from angle-axis
 
     // Step 5: Rotate set 2
@@ -346,12 +355,14 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2)
     if(!mbFixScale)
     {
         // 论文中还有一个求尺度的公式，p632右中的位置，那个公式不用考虑旋转
-        double nom = Pr1.dot(P3);
-        cv::Mat aux_P3(P3.size(),P3.type());
+        // 因此下面的尺度求解方法并不是最好的
+        double nom = Pr1.dot(P3); // D = ∑ pi'^T * R * qi'
+        cv::Mat aux_P3(P3.size(),P3.type()); 
         aux_P3=P3;
-        cv::pow(P3,2,aux_P3);
+        cv::pow(P3,2,aux_P3); // 计算结果保存在aux_P3中
         double den = 0;
 
+        // Sq = ∑ ||R * qi'||²
         for(int i=0; i<aux_P3.rows; i++)
         {
             for(int j=0; j<aux_P3.cols; j++)
@@ -366,12 +377,13 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2)
         ms12i = 1.0f;
 
     // Step 7: Translation
+    // t为质心之间经过尺度与旋转变换后的距离
     mt12i.create(1,3,P1.type());
     mt12i = O1 - ms12i*mR12i*O2;
 
     // Step 8: Transformation
     // Step 8.1 T12
-    mT12i = cv::Mat::eye(4,4,P1.type());
+    mT12i = cv::Mat::eye(4,4,P1.type()); // 注意是eye矩阵，保证了左下为0，右下为1
 
     cv::Mat sR = ms12i*mR12i;
 
@@ -383,10 +395,10 @@ void Sim3Solver::ComputeSim3(cv::Mat &P1, cv::Mat &P2)
     // Step 8.2 T21
     mT21i = cv::Mat::eye(4,4,P1.type());
 
-    cv::Mat sRinv = (1.0/ms12i)*mR12i.t();
+    cv::Mat sRinv = (1.0/ms12i)*mR12i.t(); // 尺度倒数，旋转求转置
 
     sRinv.copyTo(mT21i.rowRange(0,3).colRange(0,3));
-    cv::Mat tinv = -sRinv*mt12i;
+    cv::Mat tinv = -sRinv*mt12i; // 偏移结果推导可得
     tinv.copyTo(mT21i.rowRange(0,3).col(3));
 }
 
