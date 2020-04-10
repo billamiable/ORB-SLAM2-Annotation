@@ -72,6 +72,7 @@ public:
 
     cv::Mat iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers);
 
+// 问题：这里为何用的是private，而不是protected？
 private:
     void CheckInliers();
     bool Refine();

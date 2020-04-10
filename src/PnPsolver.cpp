@@ -100,6 +100,7 @@ namespace ORB_SLAM2
 // pws表示3D点在世界坐标系下的坐标
 // us表示图像坐标系下的2D点坐标
 // alphas为真实3D点用4个虚拟控制点表达时的系数
+// 以上变量均为double指针类型
 PnPsolver::PnPsolver(const Frame &F, const vector<MapPoint *> &vpMapPointMatches) : pws(0), us(0), alphas(0), pcs(0), maximum_number_of_correspondences(0), number_of_correspondences(0), mnInliersi(0),
                                                                                     mnIterations(0), mnBestInliers(0), N(0)
 {
@@ -112,7 +113,7 @@ PnPsolver::PnPsolver(const Frame &F, const vector<MapPoint *> &vpMapPointMatches
 
     // 根据点数初始化容器的大小
     mvpMapPointMatches = vpMapPointMatches;
-    mvP2D.reserve(F.mvpMapPoints.size());
+    mvP2D.reserve(F.mvpMapPoints.size()); // F为Frame类型变量
     mvSigma2.reserve(F.mvpMapPoints.size());
     mvP3Dw.reserve(F.mvpMapPoints.size());
     mvKeyPointIndices.reserve(F.mvpMapPoints.size());
@@ -127,16 +128,18 @@ PnPsolver::PnPsolver(const Frame &F, const vector<MapPoint *> &vpMapPointMatches
         {
             if (!pMP->isBad())
             {
-                const cv::KeyPoint &kp = F.mvKeysUn[i]; //得到2维特征点, 将KeyPoint类型变为Point2f
+                // mvKeysUn是2D图像校正后的特征点
+                const cv::KeyPoint &kp = F.mvKeysUn[i]; // 得到2维特征点, 将KeyPoint类型变为Point2f
 
-                mvP2D.push_back(kp.pt);                         //存放到mvP2D容器
-                mvSigma2.push_back(F.mvLevelSigma2[kp.octave]); //记录特征点是在哪一层提取出来的
+                mvP2D.push_back(kp.pt);                         // 存放到mvP2D容器
+                mvSigma2.push_back(F.mvLevelSigma2[kp.octave]); // 记录特征点是在哪一层提取出来的
 
-                cv::Mat Pos = pMP->GetWorldPos(); //世界坐标系下的3D点
+                cv::Mat Pos = pMP->GetWorldPos(); // 世界坐标系下的3D点
                 mvP3Dw.push_back(cv::Point3f(Pos.at<float>(0), Pos.at<float>(1), Pos.at<float>(2)));
 
-                mvKeyPointIndices.push_back(i); //记录被使用特征点在原始特征点容器中的索引, mvKeyPointIndices是跳跃的
-                mvAllIndices.push_back(idx);    //记录被使用特征点的索引, mvAllIndices是连续的
+                // TO-DO：这部分的索引关系之后可以研究下
+                mvKeyPointIndices.push_back(i); // 记录被使用特征点在原始特征点容器中的索引, mvKeyPointIndices是跳跃的
+                mvAllIndices.push_back(idx);    // 记录被使用特征点的索引, mvAllIndices是连续的
 
                 idx++;
             }
@@ -430,13 +433,16 @@ void PnPsolver::set_maximum_number_of_correspondences(int n)
     }
 }
 
+// number_of_correspondences置零
 void PnPsolver::reset_correspondences(void)
 {
     number_of_correspondences = 0;
 }
 
+// 增加3D-2D匹配对
 void PnPsolver::add_correspondence(double X, double Y, double Z, double u, double v)
 {
+    // 以下存储形式与OpenCV存三通道图像很像
     pws[3 * number_of_correspondences] = X;
     pws[3 * number_of_correspondences + 1] = Y;
     pws[3 * number_of_correspondences + 2] = Z;
@@ -463,10 +469,11 @@ void PnPsolver::choose_control_points(void)
     // Take C1, C2, and C3 from PCA on the reference points:
     // 步骤2：计算其它三个控制点，C1, C2, C3通过PCA分解得到
     // 将所有的3D参考点写成矩阵，(number_of_correspondences *　３)的矩阵
+    // OpenCV早期是用CvMat来表示图像的
     CvMat *PW0 = cvCreateMat(number_of_correspondences, 3, CV_64F);
 
     double pw0tpw0[3 * 3], dc[3], uct[3 * 3];
-    CvMat PW0tPW0 = cvMat(3, 3, CV_64F, pw0tpw0);
+    CvMat PW0tPW0 = cvMat(3, 3, CV_64F, pw0tpw0); // 最后一项为data指针，可以访问Mat里的数据
     CvMat DC = cvMat(3, 1, CV_64F, dc);
     CvMat UCt = cvMat(3, 3, CV_64F, uct);
 
@@ -478,7 +485,9 @@ void PnPsolver::choose_control_points(void)
     // 步骤2.2：利用SVD分解P'P可以获得P的主分量
     // 类似于齐次线性最小二乘求解的过程，
     // PW0的转置乘以PW0
+    // TO-DO: 学习PCA的原理以及实现，看起来还是比较简单的
     cvMulTransposed(PW0, &PW0tPW0, 1);
+    // A=UWV',DC为W,UCt为U
     cvSVD(&PW0tPW0, &DC, &UCt, 0, CV_SVD_MODIFY_A | CV_SVD_U_T);
 
     cvReleaseMat(&PW0);
@@ -487,7 +496,7 @@ void PnPsolver::choose_control_points(void)
     for (int i = 1; i < 4; i++)
     {
         // ！！！
-        double k = sqrt(dc[i - 1] / number_of_correspondences);
+        double k = sqrt(dc[i - 1] / number_of_correspondences); // 选择前三大的特征值
         for (int j = 0; j < 3; j++)
             cws[i][j] = cws[0][j] + k * uct[3 * (i - 1) + j];
     }
@@ -497,9 +506,10 @@ void PnPsolver::choose_control_points(void)
 // (a2 a3 a4)' = inverse(cws2-cws1 cws3-cws1 cws4-cws1)*(pws-cws1)，a1 = 1-a2-a3-a4
 // 每一个3D控制点，都有一组alphas与之对应
 // cws1 cws2 cws3 cws4为四个控制点的坐标
-// pws为3D参考点的坐标
+// pws为3D点在世界坐标系下的坐标
 void PnPsolver::compute_barycentric_coordinates(void)
 {
+    // cc代表cws减去第一个控制点后的坐标
     double cc[3 * 3], cc_inv[3 * 3];
     CvMat CC = cvMat(3, 3, CV_64F, cc);
     CvMat CC_inv = cvMat(3, 3, CV_64F, cc_inv);
@@ -521,11 +531,14 @@ void PnPsolver::compute_barycentric_coordinates(void)
 
     cvInvert(&CC, &CC_inv, CV_SVD);
     double *ci = cc_inv;
+    // 对于每一个匹配对都求控制坐标系下的系数
+    // TO-DO: 对于内存的直接操作有空可以用来练习
     for (int i = 0; i < number_of_correspondences; i++)
     {
         double *pi = pws + 3 * i;   // pi指向第i个3D点的首地址
         double *a = alphas + 4 * i; // a指向第i个控制点系数alphas的首地址
 
+        // 求解系数
         // pi[]-cws[0][]表示将pi和步骤1进行相同的平移
         for (int j = 0; j < 3; j++)
             a[1 + j] = ci[3 * j] * (pi[0] - cws[0][0]) +
@@ -540,11 +553,13 @@ void PnPsolver::compute_barycentric_coordinates(void)
 // |[ai1*fu, 0,   ai1*(uc-ui)], [ai2*fu, 0,   ai2*(uc-ui)], [ai3*fu, 0,    ai3*(uc-ui), [ai4*fu, 0,   ai4*(uc-ui)]|
 // |[0,   ai1*fv, ai1*(vc-vi),  [0,   ai2*fv, ai2*(vc-vi)], [0,    ai3*fv, ai3*(vc-vi), [0,   ai1*fv, ai4*(vc-vi)]|
 // 其中i从0到4
+// row表示M矩阵的第row行
 void PnPsolver::fill_M(CvMat *M,
                        const int row, const double *as, const double u, const double v)
 {
+    // M1,M2分别代表两个约束方程的u,v分量
     double *M1 = M->data.db + row * 12;
-    double *M2 = M1 + 12;
+    double *M2 = M1 + 12; // 3*4=12
 
     for (int i = 0; i < 4; i++)
     {
@@ -597,7 +612,7 @@ double PnPsolver::compute_pose(double R[3][3], double t[3])
     CvMat *M = cvCreateMat(2 * number_of_correspondences, 12, CV_64F);
 
     for (int i = 0; i < number_of_correspondences; i++)
-        fill_M(M, 2 * i, alphas + 4 * i, us[2 * i], us[2 * i + 1]);
+        fill_M(M, 2 * i, alphas + 4 * i, us[2 * i], us[2 * i + 1]); // 都是指针
 
     double mtm[12 * 12], d[12], ut[12 * 12];
     CvMat MtM = cvMat(12, 12, CV_64F, mtm);

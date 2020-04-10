@@ -33,7 +33,7 @@ namespace ORB_SLAM2
 {
 
 // 变量名称命名规则：m表示member，v表示vector(数据结构)，p表示point
-// 待确认：vpMatched12是Frame2中MapPoints的匹配，大小为Frame2的特征点个数
+// TO-DO：vpMatched12是Frame2中MapPoints的匹配，大小为Frame2的特征点个数
 // 里面存着匹配的Frame2的MapPoint指针或NULL，NULL表示未匹配
 // 对应地，Frame1中的GetMapPointMatches函数可获得同样大小的vector，存着Frame1的MapPoint指针
 // 注意：12表示2到1，这是视觉SLAM十四讲中就有的定义，后面的R和t也是一样
@@ -198,7 +198,7 @@ cv::Mat Sim3Solver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInli
 
         // Get min set of points
         // 步骤1：任意取三组点算Sim矩阵
-        // 待确认：要求R,t,s，分别是3,2,1个自由度，因此3组点可以提供6个自由度的约束
+        // TO-DO：要求R,t,s，分别是3,2,1个自由度，因此3组点可以提供6个自由度的约束
         // 同时可以理解为求解R，最基本的方法就是3点法
         for (short i = 0; i < 3; ++i)
         {
