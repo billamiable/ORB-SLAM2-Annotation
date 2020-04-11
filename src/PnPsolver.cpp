@@ -155,6 +155,7 @@ PnPsolver::PnPsolver(const Frame &F, const vector<MapPoint *> &vpMapPointMatches
     SetRansacParameters();
 }
 
+// 析构函数释放指针
 PnPsolver::~PnPsolver()
 {
     delete[] pws;
@@ -203,6 +204,7 @@ void PnPsolver::SetRansacParameters(double probability, int minInliers, int maxI
         mvMaxError[i] = mvSigma2[i] * th2;       // th2: 判断是否满足inlier的重投影误差阈值的平方
 }
 
+// 里面主要就一个iterate函数
 cv::Mat PnPsolver::find(vector<bool> &vbInliers, int &nInliers)
 {
     bool bFlag;
@@ -322,11 +324,13 @@ cv::Mat PnPsolver::iterate(int nIterations, bool &bNoMore, vector<bool> &vbInlie
     return cv::Mat();
 }
 
+// 将所有符合inlier的3D-2D匹配点一起计算PnP求解R, t
 bool PnPsolver::Refine()
 {
     vector<int> vIndices;
     vIndices.reserve(mvbBestInliers.size());
 
+    // 选中所有的inliers
     for (size_t i = 0; i < mvbBestInliers.size(); i++)
     {
         if (mvbBestInliers[i])
@@ -346,7 +350,7 @@ bool PnPsolver::Refine()
     }
 
     // Compute camera pose
-    compute_pose(mRi, mti);
+    compute_pose(mRi, mti); // 相当于重新迭代一次
 
     // Check inliers
     CheckInliers();
@@ -576,9 +580,11 @@ void PnPsolver::fill_M(CvMat *M,
 // 每一个控制点在相机坐标系下都表示为特征向量乘以beta的形式，EPnP论文的公式16
 void PnPsolver::compute_ccs(const double *betas, const double *ut)
 {
+    // 先清空置零
     for (int i = 0; i < 4; i++)
         ccs[i][0] = ccs[i][1] = ccs[i][2] = 0.0f;
 
+    // 本质就是求解Mx=0的结果
     for (int i = 0; i < 4; i++)
     {
         const double *v = ut + 12 * (11 - i);
@@ -589,11 +595,13 @@ void PnPsolver::compute_ccs(const double *betas, const double *ut)
 }
 
 // 用四个控制点作为单位向量表示下的世界坐标系下3D点的坐标
+// 问题：上文有点怀疑，为何是世界坐标系，不是相机坐标系？？
+// TO-DO: 先求3D点在机体坐标系下的坐标，再根据已知的控制点在相机坐标系下坐标，得到3D点在相机坐标系下的坐标
 void PnPsolver::compute_pcs(void)
 {
     for (int i = 0; i < number_of_correspondences; i++)
     {
-        double *a = alphas + 4 * i;
+        double *a = alphas + 4 * i; // alphas在总流程的第二步时就求好了
         double *pc = pcs + 3 * i;
 
         for (int j = 0; j < 3; j++)
@@ -601,6 +609,7 @@ void PnPsolver::compute_pcs(void)
     }
 }
 
+// 本代码的核心函数，计算PnP问题的R,t
 double PnPsolver::compute_pose(double R[3][3], double t[3])
 {
     // 步骤1：获得EPnP算法中的四个控制点（构成质心坐标系）
@@ -638,19 +647,20 @@ double PnPsolver::compute_pose(double R[3][3], double t[3])
     // |dv00, 2*dv01, dv11, 2*dv02, 2*dv12, dv22, 2*dv03, 2*dv13, 2*dv23, dv33|, 1*10
     // 4个控制点之间总共有6个距离，因此为6*10
     compute_L_6x10(ut, l_6x10);
-    compute_rho(rho);
+    compute_rho(rho); // rho即为ρ
 
     double Betas[4][4], rep_errors[4];
     double Rs[4][3][3], ts[4][3];
 
     // 不管什么情况，都假设论文中N=4，并求解部分betas（如果全求解出来会有冲突）
+    // 问题：为何全求解出来会有冲突？是最多只能有N=3吗？还是方程不够？
     // 通过优化得到剩下的betas
     // 最后计算R t
 
     // Betas10        = [B00 B01 B11 B02 B12 B22 B03 B13 B23 B33]
     // betas_approx_1 = [B00 B01     B02         B03]
     // 建模为除B11、B12、B13、B14四个参数外其它参数均为0进行最小二乘求解，求出B0、B1、B2、B3粗略解
-    find_betas_approx_1(&L_6x10, &Rho, Betas[1]);
+    find_betas_approx_1(&L_6x10, &Rho, Betas[1]); // Betas是输出
     // 高斯牛顿法优化B0、B1、B2、B3
     gauss_newton(&L_6x10, &Rho, Betas[1]);
     rep_errors[1] = compute_R_and_t(ut, Betas[1], Rs[1], ts[1]);
@@ -667,6 +677,7 @@ double PnPsolver::compute_pose(double R[3][3], double t[3])
     gauss_newton(&L_6x10, &Rho, Betas[3]);
     rep_errors[3] = compute_R_and_t(ut, Betas[3], Rs[3], ts[3]);
 
+    // 根据reprojection error选择一个最佳方案
     int N = 1;
     if (rep_errors[2] < rep_errors[1])
         N = 2;
@@ -678,6 +689,7 @@ double PnPsolver::compute_pose(double R[3][3], double t[3])
     return rep_errors[N];
 }
 
+// 备份R,t
 void PnPsolver::copy_R_and_t(const double R_src[3][3], const double t_src[3],
                              double R_dst[3][3], double t_dst[3])
 {
@@ -689,6 +701,7 @@ void PnPsolver::copy_R_and_t(const double R_src[3][3], const double t_src[3],
     }
 }
 
+// 基本操作，求欧氏距离
 double PnPsolver::dist2(const double *p1, const double *p2)
 {
     return (p1[0] - p2[0]) * (p1[0] - p2[0]) +
@@ -696,11 +709,13 @@ double PnPsolver::dist2(const double *p1, const double *p2)
            (p1[2] - p2[2]) * (p1[2] - p2[2]);
 }
 
+// 基本操作，向量点乘
 double PnPsolver::dot(const double *v1, const double *v2)
 {
     return v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
 }
 
+// 计算重投影误差
 double PnPsolver::reprojection_error(const double R[3][3], const double t[3])
 {
     double sum2 = 0.0;
@@ -722,7 +737,9 @@ double PnPsolver::reprojection_error(const double R[3][3], const double t[3])
 }
 
 // 根据世界坐标系下的四个控制点与机体坐标下对应的四个控制点（和世界坐标系下四个控制点相同尺度），求取R t
+// 问题：这里也好奇，为何上文是机体坐标系，而不是相机坐标系？
 // 见《视觉SLAM十四讲从理论到实践》 7.9.1 3D-3D: ICP SVD方法
+// TO-DO: 回头复习下这个方法，对照下视觉SLAM十四讲的代码看看
 // [U, S, Vt] = svd(A*B')，A为pc(i)列向量构成的矩阵，B为pw(i)列向量构成的矩阵
 // R = U*Vt
 // t = pc0 - R*pw0，pc0和pw0分别为相机坐标系和世界坐标系下3D点的中心坐标
@@ -802,6 +819,7 @@ void PnPsolver::estimate_R_and_t(double R[3][3], double t[3])
     t[2] = pc0[2] - dot(R[2], pw0);
 }
 
+// 外界读取求解结果R,t
 void PnPsolver::print_pose(const double R[3][3], const double t[3])
 {
     cout << R[0][0] << " " << R[0][1] << " " << R[0][2] << " " << t[0] << endl;
@@ -809,9 +827,10 @@ void PnPsolver::print_pose(const double R[3][3], const double t[3])
     cout << R[2][0] << " " << R[2][1] << " " << R[2][2] << " " << t[2] << endl;
 }
 
+// 本质是在做一个验证，防止物理上的不可能，3D点跑到相机的后面去
 void PnPsolver::solve_for_sign(void)
 {
-    if (pcs[2] < 0.0)
+    if (pcs[2] < 0.0) // 表示z深度
     {
         for (int i = 0; i < 4; i++)
             for (int j = 0; j < 3; j++)
@@ -826,6 +845,8 @@ void PnPsolver::solve_for_sign(void)
     }
 }
 
+// 求解得到控制点和尺度后，就可以转化为ICP问题求解得到R,t了
+// 下面的函数写得非常流程化，里面就是5个函数
 double PnPsolver::compute_R_and_t(const double *ut, const double *betas,
                                   double R[3][3], double t[3])
 {
@@ -854,6 +875,7 @@ void PnPsolver::find_betas_approx_1(const CvMat *L_6x10, const CvMat *Rho,
     CvMat L_6x4 = cvMat(6, 4, CV_64F, l_6x4);
     CvMat B4 = cvMat(4, 1, CV_64F, b4);
 
+    // 选取数组特定元素进行复制
     for (int i = 0; i < 6; i++)
     {
         cvmSet(&L_6x4, i, 0, cvmGet(L_6x10, i, 0));
@@ -864,6 +886,7 @@ void PnPsolver::find_betas_approx_1(const CvMat *L_6x10, const CvMat *Rho,
 
     cvSolve(&L_6x4, Rho, &B4, CV_SVD);
 
+    // 直接解得β的4个分量
     // 由于：B00 = B0 * B0一定为正
     if (b4[0] < 0)
     {
@@ -960,13 +983,14 @@ void PnPsolver::find_betas_approx_3(const CvMat *L_6x10, const CvMat *Rho,
     }
     if (b5[1] < 0)
         betas[0] = -betas[0];
-    betas[2] = b5[3] / betas[0];
+    betas[2] = b5[3] / betas[0]; // 所以最多其实只有三个β可以有值
     betas[3] = 0.0;
 }
 
 // 计算并填充矩阵L
 void PnPsolver::compute_L_6x10(const double *ut, double *l_6x10)
 {
+    // 12来源于M矩阵，3*4=12
     // ut为12*12的特征向量矩阵，ut每一行为一组特征向量解（u的每一列为一组特征向量解）
     // 由于svd按照特征值大小降序排列，因此越往下排列的特征向量越优
     // 论文中是分别讨论了N=1, N=2, N=3, N=4四种情况进行求解，这里实现时按照最一般的情况进行求解，即N=4
@@ -995,6 +1019,7 @@ void PnPsolver::compute_L_6x10(const double *ut, double *l_6x10)
 
             // 4个相机坐标系下控制点有6个距离
             // [j=0, a=0, b=1], [j=1, a=0, b=2], [j=2, a=0, b=3], [j=3, a=1, b=2], [j=4, a=1, b=3], [j=5, a=2, b=3]
+            // TO-DO: 通过改变地址间隔的差来进行寻址
             b++;
             if (b > 3)
             {
@@ -1018,6 +1043,7 @@ void PnPsolver::compute_L_6x10(const double *ut, double *l_6x10)
     // Lk: |dv00, 2*dv01, dv11, 2*dv02, 2*dv12, dv22, 2*dv03, 2*dv13, 2*dv23, dv33|, 1*10
     // Betas：[B00 B01 B11 B02 B12 B22 B03 B13 B23 B33]
     // 四个控制点共6个距离，因此L为6*10
+    // 与公式推导结果一致，对应代入即可
     for (int i = 0; i < 6; i++)
     {
         double *row = l_6x10 + 10 * i;
@@ -1047,6 +1073,7 @@ void PnPsolver::compute_rho(double *rho)
     rho[5] = dist2(cws[2], cws[3]);
 }
 
+// 高斯牛顿法求解中建模成最小二乘Ax=b进行求解
 void PnPsolver::compute_A_and_b_gauss_newton(const double *l_6x10, const double *rho,
                                              double betas[4], CvMat *A, CvMat *b)
 {
@@ -1059,6 +1086,9 @@ void PnPsolver::compute_A_and_b_gauss_newton(const double *l_6x10, const double 
         // 详细公式见：compute_L_6x10 函数中的注释
         // （dv00*B00 + 2*dv01*B01 + dv11*B11 + 2*dv02*B02 + 2*dv12*B12 + dv22*B22 + 2*dv03*B03 + 2*dv13*B13 + 2*dv23*B23 + dv33*B33）
         // 对B0、B1、B2、B3求雅克比
+        // TO-DO: 研究指针取址方式
+        // 由于l_6x10中交叉项都已经包含乘数2，所以这里有许多项都没有乘以2
+        // rowL对应dv_ik²，表示两个点的特征向量之差的平方
         rowA[0] = 2 * rowL[0] * betas[0] + rowL[1] * betas[1] + rowL[3] * betas[2] + rowL[6] * betas[3]; // 对B0求导
         rowA[1] = rowL[1] * betas[0] + 2 * rowL[2] * betas[1] + rowL[4] * betas[2] + rowL[7] * betas[3]; // 对B1求导
         rowA[2] = rowL[3] * betas[0] + rowL[4] * betas[1] + 2 * rowL[5] * betas[2] + rowL[8] * betas[3]; // 对B2求导
@@ -1069,10 +1099,21 @@ void PnPsolver::compute_A_and_b_gauss_newton(const double *l_6x10, const double 
         // l_6x10 * Betas_10x1得到机体坐标系下控制点距离平方
         // rho记录了世界坐标系下控制点之间距离平方
         // b为机体坐标系下控制点平方距离 与 世界坐标系下控制点平方距离 的残差
-        cvmSet(b, i, 0, rho[i] - (rowL[0] * betas[0] * betas[0] + rowL[1] * betas[0] * betas[1] + rowL[2] * betas[1] * betas[1] + rowL[3] * betas[0] * betas[2] + rowL[4] * betas[1] * betas[2] + rowL[5] * betas[2] * betas[2] + rowL[6] * betas[0] * betas[3] + rowL[7] * betas[1] * betas[3] + rowL[8] * betas[2] * betas[3] + rowL[9] * betas[3] * betas[3]));
+        // 被减去的项对应D_k^c，共有10项相加得到，本质就是L*β
+        cvmSet(b, i, 0, rho[i] - (rowL[0] * betas[0] * betas[0] + \
+                                  rowL[1] * betas[0] * betas[1] + \
+                                  rowL[2] * betas[1] * betas[1] + \
+                                  rowL[3] * betas[0] * betas[2] + \
+                                  rowL[4] * betas[1] * betas[2] + \
+                                  rowL[5] * betas[2] * betas[2] + \
+                                  rowL[6] * betas[0] * betas[3] + \
+                                  rowL[7] * betas[1] * betas[3] + \
+                                  rowL[8] * betas[2] * betas[3] + \
+                                  rowL[9] * betas[3] * betas[3]));
     }
 }
 
+// 应用高斯牛顿优化，包含构建线性方程组和QR分解两部分，需要多次迭代
 void PnPsolver::gauss_newton(const CvMat *L_6x10, const CvMat *Rho,
                              double betas[4])
 {
@@ -1083,19 +1124,22 @@ void PnPsolver::gauss_newton(const CvMat *L_6x10, const CvMat *Rho,
     CvMat B = cvMat(6, 1, CV_64F, b);
     CvMat X = cvMat(4, 1, CV_64F, x);
 
+    // 一共迭代5次
     for (int k = 0; k < iterations_number; k++)
     {
         // 构造Ax = B中的A和B，A为目标函数关于待优化变量（B0、B1、B2、B3）的雅克比，
         // B为目标函数当前残差（相机坐标系下控制点之间的平方距离与世界坐标系下控制点之间的平方距离之差）
         compute_A_and_b_gauss_newton(L_6x10->data.db, Rho->data.db,
-                                     betas, &A, &B);
-        qr_solve(&A, &B, &X);
+                                     betas, &A, &B); // betas是β0-4,A,B是输出
+        qr_solve(&A, &B, &X); // 应用QR分解方法求解线性方程组
 
         for (int i = 0; i < 4; i++)
             betas[i] += x[i];
     }
 }
 
+// 这部分就是应用QR分解求得Ax=b的解，可能是借鉴别的地方
+// TO-DO: 以后有时间了再仔细研究下
 void PnPsolver::qr_solve(CvMat *A, CvMat *b, CvMat *X)
 {
     static int max_nr = 0;
@@ -1205,6 +1249,7 @@ void PnPsolver::qr_solve(CvMat *A, CvMat *b, CvMat *X)
     }
 }
 
+// 计算R,t的相对误差
 void PnPsolver::relative_error(double &rot_err, double &transl_err,
                                const double Rtrue[3][3], const double ttrue[3],
                                const double Rest[3][3], const double test[3])
@@ -1235,9 +1280,11 @@ void PnPsolver::relative_error(double &rot_err, double &transl_err,
         sqrt(ttrue[0] * ttrue[0] + ttrue[1] * ttrue[1] + ttrue[2] * ttrue[2]);
 }
 
+// 旋转矩阵转化为四元数
+// TO-DO: 几种情况的判别再确认下
 void PnPsolver::mat_to_quat(const double R[3][3], double q[4])
 {
-    double tr = R[0][0] + R[1][1] + R[2][2];
+    double tr = R[0][0] + R[1][1] + R[2][2]; // 迹
     double n4;
 
     if (tr > 0.0f)
@@ -1245,7 +1292,7 @@ void PnPsolver::mat_to_quat(const double R[3][3], double q[4])
         q[0] = R[1][2] - R[2][1];
         q[1] = R[2][0] - R[0][2];
         q[2] = R[0][1] - R[1][0];
-        q[3] = tr + 1.0f;
+        q[3] = tr + 1.0f; // 这里的顺序注意，四元数是实部还是虚部在前
         n4 = q[3];
     }
     else if ((R[0][0] > R[1][1]) && (R[0][0] > R[2][2]))
