@@ -577,14 +577,14 @@ void PnPsolver::fill_M(CvMat *M,
     }
 }
 
-// 每一个控制点在相机坐标系下都表示为特征向量乘以beta的形式，EPnP论文的公式16
+// 每一个控制点在相机坐标系下的坐标都可以表示为特征向量乘以beta的形式，EPnP论文的公式16
 void PnPsolver::compute_ccs(const double *betas, const double *ut)
 {
     // 先清空置零
     for (int i = 0; i < 4; i++)
         ccs[i][0] = ccs[i][1] = ccs[i][2] = 0.0f;
 
-    // 本质就是求解Mx=0的结果
+    // 本质就是求解Mx=0的结果，但是此时已经确定了尺度
     for (int i = 0; i < 4; i++)
     {
         const double *v = ut + 12 * (11 - i);
@@ -595,8 +595,8 @@ void PnPsolver::compute_ccs(const double *betas, const double *ut)
 }
 
 // 用四个控制点作为单位向量表示下的世界坐标系下3D点的坐标
-// 问题：上文有点怀疑，为何是世界坐标系，不是相机坐标系？？
-// TO-DO: 先求3D点在机体坐标系下的坐标，再根据已知的控制点在相机坐标系下坐标，得到3D点在相机坐标系下的坐标
+// TO-DO: 我觉得上面写错了，不是世界坐标系，应该是相机坐标系
+// 逻辑：先求3D点在机体坐标系下的坐标，再根据compute_ccs函数已求得的控制点在相机坐标系下坐标，得到3D点在相机坐标系下的坐标
 void PnPsolver::compute_pcs(void)
 {
     for (int i = 0; i < number_of_correspondences; i++)
@@ -632,6 +632,7 @@ double PnPsolver::compute_pose(double R[3][3], double t[3])
     // SVD分解M'M
     cvMulTransposed(M, &MtM, 1);
     // 通过（svd分解）求解齐次最小二乘解得到相机坐标系下四个不带尺度的控制点：ut
+    // 注意：这里解得的是控制点在相机坐标系下的坐标，只不过不带尺度信息
     // ut的每一行对应一组可能的解
     // 最小特征值对应的特征向量最接近待求的解，由于噪声和约束不足的问题，导致真正的解可能是多个特征向量的线性叠加
     cvSVD(&MtM, &D, &Ut, 0, CV_SVD_MODIFY_A | CV_SVD_U_T); //得到向量ut
