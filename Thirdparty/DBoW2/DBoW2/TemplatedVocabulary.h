@@ -591,7 +591,7 @@ void TemplatedVocabulary<TDescriptor,F>::create(
   m_nodes.push_back(Node(0)); // root
   
   // create the tree
-  HKmeansStep(0, features, 1);
+  HKmeansStep(0, features, 1); // H表示hierarchy按层建立
 
   // create the words 即tree的叶子结点
   createWords();
@@ -672,6 +672,7 @@ void TemplatedVocabulary<TDescriptor,F>::HKmeansStep(NodeId parent_id,
   //cv::SparseMat last_assoc(2, msizes, CV_8U);  
   //// assoc.row(cluster_idx).col(descriptor_idx) = 1 iif associated
   
+  // 如果特征点太少，就没有必要训练了
   if((int)descriptors.size() <= m_k)
   {
     // trivial case: one cluster per feature
@@ -693,6 +694,7 @@ void TemplatedVocabulary<TDescriptor,F>::HKmeansStep(NodeId parent_id,
     // to check if clusters move after iterations
     vector<int> last_association, current_association;
 
+    // 只有当goon为false时停止迭代
     while(goon)
     {
       // 1. Calculate clusters
@@ -775,7 +777,7 @@ void TemplatedVocabulary<TDescriptor,F>::HKmeansStep(NodeId parent_id,
       else
       {
         //goon = !eqUChar(last_assoc, assoc);
-        
+        // 终止条件：两次迭代结果一样，即收敛时
         goon = false;
         for(unsigned int i = 0; i < current_association.size(); i++)
         {
