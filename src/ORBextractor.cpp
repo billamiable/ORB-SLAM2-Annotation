@@ -570,6 +570,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
     vector<ExtractorNode*> vpIniNodes;
     vpIniNodes.resize(nIni);
 
+    // 对于第一层节点分块单独写
     // step1: 建立分裂的初始节点
     // step1.1：确定节点区域
     for(int i=0; i<nIni; i++)
@@ -615,8 +616,9 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
     vector<pair<int,ExtractorNode*> > vSizeAndPointerToNode;
     vSizeAndPointerToNode.reserve(lNodes.size()*4);
 
+    // 然后在第一层分裂好之后用四叉树进行进一步的划分
     // 利用四叉树方法对图像进行划分区域
-    while(!bFinish)
+    while(!bFinish) // 不再继续划分的标准
     {
         iteration++;
 
@@ -628,6 +630,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
 
         vSizeAndPointerToNode.clear();
 
+        // TO-DO: 用到了树的经典遍历方法，广度优先遍历BFS
         // step2：广度搜索的方式遍历所有节点，将目前的子区域进行划分
         while(lit!=lNodes.end())
         {
@@ -646,6 +649,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
 
                 // Add childs if they contain points
                 // 如果子节点中包含特征点，则将该节点添加到节点链表中
+                // 注意：这里没有维护成一个树的结构，而是用链表
                 if(n1.vKeys.size()>0)
                 {
                     // note：将新分裂出的节点插入到容器前面，迭代器后面的都是上一次分裂还未访问的节点
@@ -700,7 +704,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
         // step3：Node数快接近要求数目时，优先对包含特征点比较多的区域进行划分
         // Finish if there are more nodes than required features
         // or all nodes contain just one point
-        if((int)lNodes.size()>=N || (int)lNodes.size()==prevSize)
+        if((int)lNodes.size()>=N || (int)lNodes.size()==prevSize) // 叶子节点个数超过了所需的特征点个数或不再增加
         {
             bFinish = true;
         }
@@ -805,7 +809,7 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
     // 对金字塔每一层图像提取特征点
     for (int level = 0; level < nlevels; ++level)
     {
-        const int minBorderX = EDGE_THRESHOLD-3;
+        const int minBorderX = EDGE_THRESHOLD-3; // -3的原因是提取特征点要求边框以内3的范围内
         const int minBorderY = minBorderX;
         const int maxBorderX = mvImagePyramid[level].cols-EDGE_THRESHOLD+3;
         const int maxBorderY = mvImagePyramid[level].rows-EDGE_THRESHOLD+3;
@@ -824,6 +828,7 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
 
         // wubo 如果直接对整张图进行特征点检测，则对检测结果判断每个区域内是否有特征点会比较麻烦，因此这里按照一个区域一个区域的方式检测特征点
         // 按区域提取特征点---> vToDistributeKeys
+        // 双重for循环对图像进行分块，提取特征点
         for(int i=0; i<nRows; i++)
         {
             // 计算每个块的Y方向上起始和终止区域（iniY，maxY）
@@ -851,6 +856,8 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
                 FAST(mvImagePyramid[level].rowRange(iniY,maxY).colRange(iniX,maxX),
                      vKeysCell,iniThFAST,true);
 
+                // 这里处理了特征点提取过少的问题
+                // 特征点过少时，降低阈值，重新提取
                 // 如果使用iniThFAST默认阈值提取不到特征点则使用最小阈值minThFAST再次提取
                 if(vKeysCell.empty())
                 {
@@ -874,6 +881,7 @@ void ORBextractor::ComputeKeyPointsOctTree(vector<vector<KeyPoint> >& allKeypoin
         vector<KeyPoint> & keypoints = allKeypoints[level];
         keypoints.reserve(nfeatures);
 
+        // 这里再解决提取过多的问题
         // 根据mnFeaturesPerLevel，即该层的兴趣点数,对特征点进行剔除
         keypoints = DistributeOctTree(vToDistributeKeys, minBorderX, maxBorderX,
                                       minBorderY, maxBorderY,mnFeaturesPerLevel[level], level);
@@ -1084,6 +1092,8 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
         computeOrbDescriptor(keypoints[i], image, &pattern[0], descriptors.ptr((int)i));
 }
 
+// 重载了()使得类具有函数的特性
+// 问题：没有找到在哪里调用？这是一个挺重要的问题！
 void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPoint>& _keypoints,
                       OutputArray _descriptors)
 { 
@@ -1095,6 +1105,7 @@ void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPo
 
     // Pre-compute the scale pyramid
     // 构建图像金字塔（并包含边界EDGE_THRESHOLD）
+    // 注意：边界问题
     ComputePyramid(image);
 
     // 计算每层图像的兴趣点
@@ -1167,10 +1178,12 @@ void ORBextractor::ComputePyramid(cv::Mat image)
         mvImagePyramid[level] = temp(Rect(EDGE_THRESHOLD, EDGE_THRESHOLD, sz.width, sz.height));
 
         // Compute the resized image
+        // 非第0层需要先降采样再拷贝
         if( level != 0 )
         {
             resize(mvImagePyramid[level-1], mvImagePyramid[level], sz, 0, 0, cv::INTER_LINEAR);
-
+            // 以下为OpenCV自带的函数，用于处理边界问题
+            // BORDER_REFLECT_101表示一种边界扩展方式，即abcd|cba，镜像不扩展d
             copyMakeBorder(mvImagePyramid[level], temp, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD,
                            BORDER_REFLECT_101+BORDER_ISOLATED);            
         }
