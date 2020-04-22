@@ -60,6 +60,7 @@ ORBmatcher::ORBmatcher(float nnratio, bool checkOri): mfNNratio(nnratio), mbChec
  * @return             成功匹配的数量
  * @see SearchLocalPoints() isInFrustum()
  */
+// 问题：这里的Track是什么意思？已经track住了，还是一个预测的量？估计是速度模型预测的
 int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoints, const float th)
 {
     int nmatches=0;
@@ -71,17 +72,20 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
         MapPoint* pMP = vpMapPoints[iMP];
 
         // 判断该点是否要投影
-        if(!pMP->mbTrackInView)
+        if(!pMP->mbTrackInView) // 如果已经不可见，则不需要投影
             continue;
 
         if(pMP->isBad())
             continue;
             
         // step1：通过距离预测特征点所在的金字塔层数
+        // 问题：为何是预测金字塔层数？不能直接得到确切的吗？
         const int &nPredictedLevel = pMP->mnTrackScaleLevel;
 
         // The size of the window will depend on the viewing direction
         // step2：根据观测到该3D点的视角确定搜索窗口的大小, 若相机正对这该3D点则r取一个较小的值（mTrackViewCos>0.998?2.5:4.0）
+        // 直观理解是如果3D点与光心的连线与光心所在轴夹角小，则看得真切，缩小搜索范围
+        // 反之，则不确定度增大，需要增大搜索范围
         float r = RadiusByViewingCos(pMP->mTrackViewCos);
         
         if(bFactor)
@@ -92,6 +96,7 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
         // nPredictedLevel-1：miniLevel
         // nPredictedLevel：maxLevel
         // step3：在2D投影点附近一定范围内搜索属于miniLevel~maxLevel层的特征点 ---> vIndices
+        // 注意：这里会搜索预测金字塔层数附近两层，而不是仅仅搜索一层
         const vector<size_t> vIndices =
                 F.GetFeaturesInArea(pMP->mTrackProjX,pMP->mTrackProjY,r*F.mvScaleFactors[nPredictedLevel],nPredictedLevel-1,nPredictedLevel);
 
@@ -107,6 +112,7 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
         int bestIdx =-1 ;
 
         // Get best and second matches with near keypoints
+        // 对上面找到的搜索范围内的特征点进行遍历匹配
         // step4：在vIndices内找到最佳匹配与次佳匹配，如果最优匹配误差小于阈值，且最优匹配明显优于次优匹配，则匹配3D点-2D特征点匹配关联成功
         for(vector<size_t>::const_iterator vit=vIndices.begin(), vend=vIndices.end(); vit!=vend; vit++)
         {
@@ -117,6 +123,7 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
                 if(F.mvpMapPoints[idx]->Observations()>0)
                     continue;
 
+            // 如果投影误差很大，则跳过遍历匹配下一个
             if(F.mvuRight[idx]>0)
             {
                 const float er = fabs(pMP->mTrackProjXR-F.mvuRight[idx]);
@@ -128,6 +135,7 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
 
             const int dist = DescriptorDistance(MPdescriptor,d);
             
+            // 如果找到了较小的投影误差对应的特征点
             // 记录最优匹配和次优匹配
             if(dist<bestDist)
             {
@@ -144,6 +152,7 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
             }
         }
 
+        // 当且仅当最优与次优匹配都在同一金字塔层，且最优比次优好了规定的程度才算匹配成功
         // Apply ratio to second match (only if best and second are in the same scale level)
         if(bestDist<=TH_HIGH)
         {
@@ -161,6 +170,7 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
 // 根据观测角度决定 SearchByProjection 的搜索范围
 float ORBmatcher::RadiusByViewingCos(const float &viewCos)
 {
+    // 实现方法比较naive，只是做了二值判断
     if(viewCos>0.998)
         return 2.5;
     else
@@ -229,13 +239,16 @@ int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPoin
     DBoW2::FeatureVector::const_iterator KFend = vFeatVecKF.end();
     DBoW2::FeatureVector::const_iterator Fend = F.mFeatVec.end();
 
+    // KFit即FeatureVector的数据结构：std::map<NodeId, std::vector<featureId> >
     while(KFit != KFend && Fit != Fend)
     {
+        // 首先判断NodeId
         if(KFit->first == Fit->first) //步骤1：分别取出属于同一node的ORB特征点(只有属于同一node，才有可能是匹配点)
         {
             const vector<unsigned int> vIndicesKF = KFit->second;
             const vector<unsigned int> vIndicesF = Fit->second;
 
+            // 然后遍历featureId
             // 步骤2：遍历KF中属于该node的特征点
             for(size_t iKF=0; iKF<vIndicesKF.size(); iKF++)
             {
@@ -500,6 +513,7 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
         if(level1>0)
             continue;
 
+        // 直接给定window_size，相当于人为给定搜索半径了
         vector<size_t> vIndices2 = F2.GetFeaturesInArea(vbPrevMatched[i1].x,vbPrevMatched[i1].y, windowSize,level1,level1);
 
         if(vIndices2.empty())
@@ -752,7 +766,7 @@ int ORBmatcher::SearchByBoW(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint *> &
 }
 
 /**
- * @brief 利用基本矩阵F12，在pKF1和pKF2之间找特征匹配。作用：当pKF1中特征点没有对应的3D点时，通过匹配的特征点产生新的3d点
+ * @brief 利用基本矩阵F12，在pKF1和pKF2之间找特征匹配。作用：当pKF1中特征点没有对应的3D点时，关联至pKF2中的匹配特征点所对应的3d点
  * 
  * @param pKF1          关键帧1
  * @param pKF2          关键帧2
@@ -814,7 +828,7 @@ int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2, cv::Mat F
                 const size_t idx1 = f1it->second[i1];
                 
                 // 步骤2.1：通过特征点索引idx1在pKF1中取出对应的MapPoint
-                MapPoint* pMP1 = pKF1->GetMapPoint(idx1);
+                MapPoint* pMP1 = pKF1->GetMapPoint(idx1); // 这里得到了3D点
                 
                 // If there is already a MapPoint skip
                 // ！！！！！！由于寻找的是未匹配的特征点，所以pMP1应该为NULL
@@ -889,7 +903,7 @@ int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2, cv::Mat F
                 }
 
                 // 步骤1、2、3、4总结下来就是：将左图像的每个特征点与右图像同一node节点的所有特征点
-                // 依次检测，判断是否满足对极几何约束，满足约束就是匹配的特征点
+                // 依次检测，判断是否满足对极几何约束，满足约束就是匹配的特征点，从而关联3D点和特征点
                 
                 // 详见SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPointMatches)函数步骤4
                 if(bestIdx2>=0)
@@ -954,7 +968,7 @@ int ORBmatcher::SearchForTriangulation(KeyFrame *pKF1, KeyFrame *pKF2, cv::Mat F
     {
         if(vMatches12[i]<0)
             continue;
-        vMatchedPairs.push_back(make_pair(i,vMatches12[i]));
+        vMatchedPairs.push_back(make_pair(i,vMatches12[i])); // TO-DO: 这个数据结构对于理解match关系有帮助
     }
 
     return nmatches;
@@ -1001,6 +1015,7 @@ int ORBmatcher::Fuse(KeyFrame *pKF, const vector<MapPoint *> &vpMapPoints, const
         cv::Mat p3Dc = Rcw*p3Dw + tcw;
 
         // Depth must be positive
+        // 工程上很重要，判断深度值是否为正，去除歧义性
         if(p3Dc.at<float>(2)<0.0f)
             continue;
 
@@ -1027,7 +1042,7 @@ int ORBmatcher::Fuse(KeyFrame *pKF, const vector<MapPoint *> &vpMapPoints, const
             continue;
 
         // Viewing angle must be less than 60 deg
-        cv::Mat Pn = pMP->GetNormal();
+        cv::Mat Pn = pMP->GetNormal(); // 光心轴
 
         if(PO.dot(Pn)<0.5*dist3D)
             continue;
@@ -1106,7 +1121,7 @@ int ORBmatcher::Fuse(KeyFrame *pKF, const vector<MapPoint *> &vpMapPoints, const
             {
                 if(!pMPinKF->isBad())// 如果这个MapPoint不是bad，选择哪一个呢？
                 {
-                    if(pMPinKF->Observations()>pMP->Observations())
+                    if(pMPinKF->Observations()>pMP->Observations()) // 选择看到得多的
                         pMP->Replace(pMPinKF);
                     else
                         pMPinKF->Replace(pMP);
@@ -1513,6 +1528,7 @@ int ORBmatcher::SearchBySim3(KeyFrame *pKF1, KeyFrame *pKF2, vector<MapPoint*> &
  * @return              成功匹配的数量
  * @see SearchByBoW()
  */
+// 区别：这里是上一帧，第一个是Local mapping
 int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, const float th, const bool bMono)
 {
     int nmatches = 0;
@@ -1540,7 +1556,7 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
 
     for(int i=0; i<LastFrame.N; i++)
     {
-        MapPoint* pMP = LastFrame.mvpMapPoints[i];
+        MapPoint* pMP = LastFrame.mvpMapPoints[i]; // 取出上一帧的3D点
 
         if(pMP)
         {
@@ -1621,6 +1637,7 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
                     }
                 }
 
+                // 由于是两帧之间的匹配，因此要求两帧中各个匹配的特征点的旋转主方向符合一致性
                 // 详见SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPointMatches)函数步骤4
                 if(bestDist<=TH_HIGH)
                 {
@@ -1643,13 +1660,15 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
         }
     }
 
-    //Apply rotation consistency
+    // Apply rotation consistency
+    // 进一步地验证旋转主方向是否符合一致性
     if(mbCheckOrientation)
     {
         int ind1=-1;
         int ind2=-1;
         int ind3=-1;
 
+        // 类似中值滤波的方法，计算三个直方图的最高点，作为旋转主方向
         ComputeThreeMaxima(rotHist,HISTO_LENGTH,ind1,ind2,ind3);
 
         for(int i=0; i<HISTO_LENGTH; i++)
@@ -1669,6 +1688,7 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
 }
 
 // 对当前帧每个3D点通过投影在小范围内找到和最匹配的2D点。从而实现当前帧CurrentFrame对关键帧3D点的匹配跟踪。用于重定位时特征点匹配
+// 跟上一帧与当前帧的代码基本一致，只是改成了KeyFrame
 int ORBmatcher::SearchByProjection(Frame &CurrentFrame, KeyFrame *pKF, const set<MapPoint*> &sAlreadyFound, const float th , const int ORBdist)
 {
     int nmatches = 0;
