@@ -94,6 +94,7 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 
     //Initialize the Tracking thread
     //(it will live in the main thread of execution, the one that called this constructor)
+    // 所以Tracking其实就是主线程
     mpTracker = new Tracking(this, mpVocabulary, mpFrameDrawer, mpMapDrawer,
                              mpMap, mpKeyFrameDatabase, strSettingsFile, mSensor);
 
@@ -166,6 +167,7 @@ cv::Mat System::TrackStereo(const cv::Mat &imLeft, const cv::Mat &imRight, const
     }
     }
 
+    // 因此System可以看成是一个壳，本质调用了输入图像的工作
     return mpTracker->GrabImageStereo(imLeft,imRight,timestamp);
 }
 

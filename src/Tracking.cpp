@@ -199,6 +199,7 @@ cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRe
     cv::Mat imGrayRight = imRectRight;
 
     // 步骤1：将RGB或RGBA图像转为灰度图像
+    // 问题：为何ORBSLAM要把图像转成灰度图呢？
     if(mImGray.channels()==3)
     {
         if(mbRGB)
@@ -355,6 +356,7 @@ void Tracking::Track()
         // Initial camera pose estimation using motion model or relocalization (if tracking is lost)
         // 在viewer中有个开关menuLocalizationMode，有它控制是否ActivateLocalizationMode，并最终管控mbOnlyTracking
         // mbOnlyTracking等于false表示正常VO模式（有地图更新），mbOnlyTracking等于true表示用户手动选择定位模式
+        // 下面正常的VO流程
         if(!mbOnlyTracking)
         {
             // Local Mapping is activated. This is the normal behaviour, unless
@@ -381,7 +383,7 @@ void Tracking::Track()
                     // 优化每个特征点都对应3D点重投影误差即可得到位姿
                     bOK = TrackReferenceKeyFrame();
                 }
-                else
+                else // 正常情况下多使用下面代码
                 {
                     // 根据恒速模型设定当前帧的初始位姿
                     // 通过投影的方式在参考帧中找当前帧特征点的匹配点
@@ -635,7 +637,7 @@ void Tracking::StereoInitialization()
     {
         // Set Frame pose to the origin
         // 步骤1：设定初始位姿
-        mCurrentFrame.SetPose(cv::Mat::eye(4,4,CV_32F));
+        mCurrentFrame.SetPose(cv::Mat::eye(4,4,CV_32F)); // 认为第一帧为单位矩阵
 
         // Create KeyFrame
         // 步骤2：将当前帧构造为初始关键帧
@@ -649,11 +651,13 @@ void Tracking::StereoInitialization()
 
         // Insert KeyFrame in the map
         // KeyFrame中包含了地图、反过来地图中也包含了KeyFrame，相互包含
+        // 问题：KeyFrame里为何会包含地图？
         // 步骤3：在地图中添加该初始关键帧
         mpMap->AddKeyFrame(pKFini);
 
         // Create MapPoints and asscoiate to KeyFrame
         // 步骤4：通过stereo深度为每个特征点构造MapPoint
+        // 以下部分是根据MapPoint的数据结构类型来对应创建的
         for(int i=0; i<mCurrentFrame.N;i++)
         {
             float z = mCurrentFrame.mvDepth[i];
@@ -744,7 +748,8 @@ void Tracking::MonocularInitialization()
             // 由当前帧构造初始器 sigma:1.0 iterations:200
             mpInitializer =  new Initializer(mCurrentFrame,1.0,200);
 
-            fill(mvIniMatches.begin(),mvIniMatches.end(),-1);
+            // TO-DO: 与memset类似，但是效率更高，是stl标准库里实现的加速方案
+            fill(mvIniMatches.begin(),mvIniMatches.end(),-1); // 都赋值为-1
 
             return;
         }
@@ -784,6 +789,7 @@ void Tracking::MonocularInitialization()
         vector<bool> vbTriangulated; // Triangulated Correspondences (mvIniMatches)
 
         // 步骤5：通过H模型或F模型进行单目初始化，得到两帧间相对运动、初始MapPoints
+        // 下面已经完成了三角化
         if(mpInitializer->Initialize(mCurrentFrame, mvIniMatches, Rcw, tcw, mvIniP3D, vbTriangulated))
         {
             // 步骤6：删除那些无法进行三角化的匹配点
@@ -886,10 +892,12 @@ void Tracking::CreateInitialMapMonocular()
     cout << "New Map created with " << mpMap->MapPointsInMap() << " points" << endl;
 
     // 步骤5：BA优化
+    // 问题：这里还需要做优化的原因是什么？而且还是对所有点都做BA。
     Optimizer::GlobalBundleAdjustemnt(mpMap,20);
 
     // Set median depth to 1
     // 步骤6：!!!将MapPoints的中值深度归一化到1，并归一化两帧之间变换
+    // 问题：为何不用参考物体来恢复尺度信息
     // 单目传感器无法恢复真实的深度，这里将点云中值深度（欧式距离，不是指z）归一化到1
     // 评估关键帧场景深度，q=2表示中值
     float medianDepth = pKFini->ComputeSceneMedianDepth(2);
@@ -1043,6 +1051,7 @@ void Tracking::UpdateLastFrame()
     mLastFrame.SetPose(Tlr*pRef->GetPose()); // Tlr*Trw = Tlw 1:last r:reference w:world
 
     // 如果上一帧为关键帧，或者单目的情况，则退出
+    // 这里判断了是否为单目，单目是因为得到3D点的方法不一样，三角化也直接写在另一处了
     if(mnLastKeyFrameId==mLastFrame.mnId || mSensor==System::MONOCULAR)
         return;
 
@@ -1140,7 +1149,7 @@ bool Tracking::TrackWithMotionModel()
 
     // 根据Const Velocity Model(认为这两帧之间的相对运动和之前两帧间相对运动相同)估计当前帧的位姿
     // mVelocity为最近一次前后帧位姿之差
-    mCurrentFrame.SetPose(mVelocity*mLastFrame.mTcw);
+    mCurrentFrame.SetPose(mVelocity*mLastFrame.mTcw); // 问题：恒速模型可以直接乘？
 
     fill(mCurrentFrame.mvpMapPoints.begin(),mCurrentFrame.mvpMapPoints.end(),static_cast<MapPoint*>(NULL));
 

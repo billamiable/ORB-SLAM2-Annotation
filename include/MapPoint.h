@@ -127,6 +127,7 @@ public:
 protected:
 
     // Position in absolute coordinates
+    // 挺有意思的，用Mat结构来表示
     cv::Mat mWorldPos; ///< MapPoint在世界坐标系下的坐标
 
     // Keyframes observing the point and associated index in keyframe
