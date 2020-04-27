@@ -254,6 +254,7 @@ void LocalMapping::MapPointCulling()
             // 步骤1：已经是坏点的MapPoints直接从检查链表中删除
             lit = mlpRecentAddedMapPoints.erase(lit);
         }
+        // 注意：剔除3D点的条件是递进式的，不是并列的
         else if(pMP->GetFoundRatio()<0.25f)
         {
             // 步骤2：将不满足VI-B条件的MapPoint剔除
