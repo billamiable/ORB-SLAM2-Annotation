@@ -79,7 +79,8 @@ public:
     void RequestFinish();
 
     bool isFinished();
-
+    
+    // 这里用到了eigen
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
 protected:
